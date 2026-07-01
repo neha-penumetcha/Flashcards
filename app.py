@@ -19,8 +19,9 @@ from chunker import chunk_text
 from flashcard_gen import generate_flashcards_for_chunk, dedup_flashcards
 from styles import inject_css
 from flip_card import render_flip_card
+from pdf_export import build_qa_pdf
 
-st.set_page_config(page_title="FlashGen", page_icon="📑", layout="centered")
+st.set_page_config(page_title="FlashGen", page_icon="🧠", layout="centered")
 inject_css()
 
 # ---------- API KEY FROM SECRETS ----------
@@ -43,6 +44,8 @@ if "stored_chunks" not in st.session_state:
     st.session_state.stored_chunks = []  # text chunks from every file uploaded so far
 if "status_message" not in st.session_state:
     st.session_state.status_message = None  # (kind, text) - shown once, then cleared
+if "source_files" not in st.session_state:
+    st.session_state.source_files = []  # names of every file uploaded so far
 
 cards = st.session_state.flashcards
 
@@ -84,6 +87,7 @@ with top_right:
             st.session_state.review_marks = {}
             st.session_state.reveal = set()
             st.session_state.stored_chunks = []
+            st.session_state.source_files = []
             st.rerun()
 
 if not api_key:
@@ -168,6 +172,9 @@ if page == "Quiz":
                 )
             else:
                 st.session_state.stored_chunks.extend(all_chunks)
+                for f in uploaded_files:
+                    if f.name not in st.session_state.source_files:
+                        st.session_state.source_files.append(f.name)
                 added, errors = _generate_and_append(all_chunks, cards_per_chunk)
                 if errors:
                     st.session_state.status_message = (
@@ -300,3 +307,18 @@ elif page == "Review":
 
                 if marks.get(i) == "correct":
                     st.caption("✅ You got this right in the quiz")
+
+        # ---- Download the whole deck as a PDF ----
+        st.markdown("---")
+        default_name = ", ".join(st.session_state.source_files) if st.session_state.source_files else "Study Deck"
+        deck_name = st.text_input("Document name (shown on the PDF)", value=default_name)
+        try:
+            pdf_bytes = build_qa_pdf(cards, deck_name=deck_name)
+            st.download_button(
+                "📄 Download as PDF",
+                data=pdf_bytes,
+                file_name="flashgen_deck.pdf",
+                mime="application/pdf",
+            )
+        except Exception as e:
+            st.error(f"Couldn't build the PDF: {e}")

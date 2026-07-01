@@ -1,6 +1,7 @@
 streamlit
 streamlit-option-menu
 requests
+fpdf2
 pdfplumber
 python-docx
 python-pptx
