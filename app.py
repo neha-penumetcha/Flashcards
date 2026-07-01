@@ -121,41 +121,68 @@ if page == "Quiz":
                 st.rerun()  # deck is no longer empty -> next run shows the quiz card
 
     else:
-        # ---- Flip card + scoring lives HERE ----
-        current = cards[st.session_state.quiz_index]
+        # ---- Quiz complete: show score summary instead of a card ----
+        if st.session_state.quiz_index >= len(cards):
+            marks = st.session_state.review_marks
+            attempted = len(marks)
+            correct = sum(1 for v in marks.values() if v == "correct")
+            pct = round((correct / attempted) * 100) if attempted else 0
 
-        top1, top2 = st.columns([3, 1])
-        with top1:
-            st.caption(f"Card {st.session_state.quiz_index + 1} of {len(cards)}")
-            st.progress((st.session_state.quiz_index + 1) / len(cards))
-        with top2:
-            if st.button("🔀 Shuffle"):
-                random.shuffle(st.session_state.flashcards)
+            st.markdown("# Done! 🎉")
+            st.markdown(
+                f"<div class='stat-block'><span class='stat-number'>{pct}%</span>"
+                f"<span class='stat-label'>{correct} correct out of {attempted} attempted "
+                f"({len(cards)} cards total)</span></div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("")
+            st.caption("Head to the Review tab for the full question-by-question breakdown.")
+
+            if st.button("🔁 Retake quiz"):
                 st.session_state.quiz_index = 0
                 st.rerun()
 
-        render_flip_card(current["question"], current["answer"], key=f"card{st.session_state.quiz_index}")
+        else:
+            # ---- Flip card + scoring lives HERE ----
+            current = cards[st.session_state.quiz_index]
 
-        def _advance():
-            if st.session_state.quiz_index < len(cards) - 1:
-                st.session_state.quiz_index += 1
+            top1, top2 = st.columns([3, 1])
+            with top1:
+                st.caption(f"Card {st.session_state.quiz_index + 1} of {len(cards)}")
+                st.progress((st.session_state.quiz_index + 1) / len(cards))
+            with top2:
+                if st.button("🔀 Shuffle"):
+                    random.shuffle(st.session_state.flashcards)
+                    st.session_state.quiz_index = 0
+                    st.rerun()
 
-        nav1, nav2, nav3 = st.columns(3)
-        with nav1:
-            if st.button("⬅️ Previous", disabled=st.session_state.quiz_index == 0):
-                st.session_state.quiz_index -= 1
-                st.rerun()
-        with nav2:
-            # Marks this card correct AND moves to the next one - this is where scoring happens
-            if st.button("Got it right ✅"):
-                st.session_state.review_marks[st.session_state.quiz_index] = "correct"
-                _advance()
-                st.rerun()
-        with nav3:
-            # Moves on without marking it - stays "unattempted" in the Review score
-            if st.button("Skip ⏭️"):
-                _advance()
-                st.rerun()
+            render_flip_card(current["question"], current["answer"], key=f"card{st.session_state.quiz_index}")
+
+            def _advance():
+                st.session_state.quiz_index += 1  # can now reach len(cards) -> triggers summary screen
+
+            nav1, nav2, nav3, nav4 = st.columns(4)
+            with nav1:
+                if st.button("⬅️ Previous", disabled=st.session_state.quiz_index == 0):
+                    st.session_state.quiz_index -= 1
+                    st.rerun()
+            with nav2:
+                # Marks this card correct AND moves to the next one - this is where scoring happens
+                if st.button("Got it right ✅"):
+                    st.session_state.review_marks[st.session_state.quiz_index] = "correct"
+                    _advance()
+                    st.rerun()
+            with nav3:
+                # Marks this card wrong AND moves to the next one
+                if st.button("Got it wrong ❌"):
+                    st.session_state.review_marks[st.session_state.quiz_index] = "incorrect"
+                    _advance()
+                    st.rerun()
+            with nav4:
+                # Moves on without marking it - stays "unattempted" in the Review score
+                if st.button("Skip ⏭️"):
+                    _advance()
+                    st.rerun()
 
 # ---------- REVIEW PAGE: plain Q&A list + live score ----------
 elif page == "Review":
