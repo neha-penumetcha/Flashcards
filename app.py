@@ -21,7 +21,7 @@ from styles import inject_css
 from flip_card import render_flip_card
 from pdf_export import build_qa_pdf
 
-st.set_page_config(page_title="FlashGen", page_icon="🧠", layout="centered")
+st.set_page_config(page_title="FlashGen", page_icon="📑", layout="centered")
 inject_css()
 
 # ---------- API KEY FROM SECRETS ----------
