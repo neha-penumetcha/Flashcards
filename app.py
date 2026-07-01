@@ -20,7 +20,7 @@ from flashcard_gen import generate_flashcards_for_chunk, dedup_flashcards
 from styles import inject_css
 from flip_card import render_flip_card
 
-st.set_page_config(page_title="FlashGen", page_icon="🧠", layout="centered")
+st.set_page_config(page_title="FlashGen", page_icon="📑", layout="centered")
 inject_css()
 
 # ---------- API KEY FROM SECRETS ----------
