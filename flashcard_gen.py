@@ -16,10 +16,15 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "llama-3.3-70b-versatile"
 
 
-def generate_flashcards_for_chunk(chunk: str, api_key: str, num_cards: int = 6) -> list[dict]:
+def generate_flashcards_for_chunk(chunk: str, api_key: str, num_cards: int = 6, temperature: float = 0.4) -> list[dict]:
     """
     Sends one chunk of study material to Groq and asks for flashcards back
     as strict JSON. Returns a list of {"question": ..., "answer": ...}.
+
+    temperature controls variety - use the default for a first pass, and a
+    higher value (e.g. 0.8) when regenerating more questions from material
+    that's already been covered, so the new batch reads differently rather
+    than repeating the same phrasing.
     """
     prompt = f"""You are an exam-prep assistant. Read the study material below and create
 {num_cards} high-quality flashcards for exam revision.
@@ -46,7 +51,7 @@ Study material:
         json={
             "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.4,  # lower = more focused/consistent flashcards
+            "temperature": temperature,
             "max_tokens": 2000,
         },
         timeout=60,

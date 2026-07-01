@@ -20,7 +20,7 @@ from flashcard_gen import generate_flashcards_for_chunk, dedup_flashcards
 from styles import inject_css
 from flip_card import render_flip_card
 
-st.set_page_config(page_title="FlashGen", page_icon="📑", layout="centered")
+st.set_page_config(page_title="FlashGen", page_icon="🧠", layout="centered")
 inject_css()
 
 # ---------- API KEY FROM SECRETS ----------
@@ -39,8 +39,34 @@ if "review_marks" not in st.session_state:
     st.session_state.review_marks = {}
 if "reveal" not in st.session_state:
     st.session_state.reveal = set()  # which review cards have their answer shown
+if "stored_chunks" not in st.session_state:
+    st.session_state.stored_chunks = []  # text chunks from every file uploaded so far
 
 cards = st.session_state.flashcards
+
+
+def _generate_and_append(chunks, cards_per_chunk, temperature=0.4):
+    """
+    Runs flashcard generation over the given chunks and appends only
+    genuinely new (non-duplicate) cards to the existing deck - this is
+    what makes "add more material" and "generate more questions" additive
+    instead of overwriting what's already there. Returns count added.
+    """
+    new_cards = []
+    progress = st.progress(0.0, text="Generating...")
+    for i, chunk in enumerate(chunks):
+        progress.progress((i + 1) / len(chunks), text=f"Generating chunk {i + 1}/{len(chunks)}")
+        try:
+            new_cards.extend(
+                generate_flashcards_for_chunk(chunk, api_key, cards_per_chunk, temperature=temperature)
+            )
+        except Exception as e:
+            st.warning(f"Skipped one chunk: {e}")
+    progress.empty()
+    combined = dedup_flashcards(st.session_state.flashcards + new_cards)
+    added = len(combined) - len(st.session_state.flashcards)
+    st.session_state.flashcards = combined
+    return added
 
 # ---------- TOP BAR: branding + clear-deck tucked in the corner ----------
 top_left, top_right = st.columns([5, 1])
@@ -54,6 +80,7 @@ with top_right:
             st.session_state.quiz_index = 0
             st.session_state.review_marks = {}
             st.session_state.reveal = set()
+            st.session_state.stored_chunks = []
             st.rerun()
 
 if not api_key:
@@ -83,23 +110,28 @@ page = option_menu(
 
 # ---------- QUIZ PAGE ----------
 if page == "Quiz":
-    if not cards:
-        # ---- Upload lives HERE, in the main area, only shown when deck is empty ----
-        st.markdown("# Upload your material")
-        st.caption("PDFs, PPTs, Word docs, or scanned/handwritten images — any size, any mix.")
-
+    # ---- Add material / generate more - always available, not just when empty ----
+    with st.expander("➕ Add material or generate more questions", expanded=not cards):
         uploaded_files = st.file_uploader(
-            "Drop files here",
+            "Upload PDFs, PPTs, Word docs, or scanned/handwritten images — any size, any mix",
             type=["pdf", "docx", "pptx", "txt", "png", "jpg", "jpeg"],
             accept_multiple_files=True,
-            label_visibility="collapsed",
         )
         cards_per_chunk = st.slider("Flashcards per chunk", 3, 10, 6)
 
-        if st.button("Generate flashcards", type="primary", disabled=not (uploaded_files and api_key)):
-            all_new_cards = []
-            progress = st.progress(0.0, text="Reading files...")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            add_clicked = st.button(
+                "Generate from these files", type="primary", disabled=not (uploaded_files and api_key)
+            )
+        with col_b:
+            more_clicked = st.button(
+                "🔁 Generate more (different)",
+                disabled=not (st.session_state.stored_chunks and api_key),
+                help="Reuses everything already uploaded to make a fresh, differently-worded batch.",
+            )
 
+        if add_clicked:
             all_chunks = []
             for f in uploaded_files:
                 text = extract_text(f.name, f.read())
@@ -108,81 +140,87 @@ if page == "Quiz":
             if not all_chunks:
                 st.warning("Couldn't extract any text from these files. Are they empty or corrupted?")
             else:
-                for i, chunk in enumerate(all_chunks):
-                    progress.progress((i + 1) / len(all_chunks), text=f"Generating chunk {i + 1}/{len(all_chunks)}")
-                    try:
-                        all_new_cards.extend(generate_flashcards_for_chunk(chunk, api_key, cards_per_chunk))
-                    except Exception as e:
-                        st.warning(f"Skipped one chunk: {e}")
+                st.session_state.stored_chunks.extend(all_chunks)
+                added = _generate_and_append(all_chunks, cards_per_chunk)
+                st.success(f"{added} new cards added — {len(st.session_state.flashcards)} total in your deck.")
+                st.rerun()
 
-                st.session_state.flashcards = dedup_flashcards(all_new_cards)
-                st.session_state.quiz_index = 0
-                progress.empty()
-                st.rerun()  # deck is no longer empty -> next run shows the quiz card
+        if more_clicked:
+            # Higher temperature = more varied phrasing/coverage than the first pass;
+            # dedup_flashcards inside _generate_and_append filters out anything too similar.
+            added = _generate_and_append(st.session_state.stored_chunks, cards_per_chunk, temperature=0.8)
+            if added == 0:
+                st.info("Didn't find any genuinely new questions this round — try again, or add more material.")
+            else:
+                st.success(f"{added} new cards added — {len(st.session_state.flashcards)} total in your deck.")
+            st.rerun()
+
+    if not cards:
+        st.info("Upload material above to get started — your quiz will start right here.")
+
+    elif st.session_state.quiz_index >= len(cards):
+        # ---- Quiz complete: show score summary instead of a card ----
+        marks = st.session_state.review_marks
+        attempted = len(marks)
+        correct = sum(1 for v in marks.values() if v == "correct")
+        pct = round((correct / attempted) * 100) if attempted else 0
+
+        st.markdown("# Done! 🎉")
+        st.markdown(
+            f"<div class='stat-block'><span class='stat-number'>{pct}%</span>"
+            f"<span class='stat-label'>{correct} correct out of {attempted} attempted "
+            f"({len(cards)} cards total)</span></div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
+        st.caption("Head to the Review tab for the full question-by-question breakdown, "
+                    "or add more material above to keep going.")
+
+        if st.button("🔁 Retake quiz"):
+            st.session_state.quiz_index = 0
+            st.rerun()
 
     else:
-        # ---- Quiz complete: show score summary instead of a card ----
-        if st.session_state.quiz_index >= len(cards):
-            marks = st.session_state.review_marks
-            attempted = len(marks)
-            correct = sum(1 for v in marks.values() if v == "correct")
-            pct = round((correct / attempted) * 100) if attempted else 0
+        # ---- Flip card + scoring lives HERE ----
+        current = cards[st.session_state.quiz_index]
 
-            st.markdown("# Done! 🎉")
-            st.markdown(
-                f"<div class='stat-block'><span class='stat-number'>{pct}%</span>"
-                f"<span class='stat-label'>{correct} correct out of {attempted} attempted "
-                f"({len(cards)} cards total)</span></div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown("")
-            st.caption("Head to the Review tab for the full question-by-question breakdown.")
-
-            if st.button("🔁 Retake quiz"):
+        top1, top2 = st.columns([3, 1])
+        with top1:
+            st.caption(f"Card {st.session_state.quiz_index + 1} of {len(cards)}")
+            st.progress((st.session_state.quiz_index + 1) / len(cards))
+        with top2:
+            if st.button("🔀 Shuffle"):
+                random.shuffle(st.session_state.flashcards)
                 st.session_state.quiz_index = 0
                 st.rerun()
 
-        else:
-            # ---- Flip card + scoring lives HERE ----
-            current = cards[st.session_state.quiz_index]
+        render_flip_card(current["question"], current["answer"], key=f"card{st.session_state.quiz_index}")
 
-            top1, top2 = st.columns([3, 1])
-            with top1:
-                st.caption(f"Card {st.session_state.quiz_index + 1} of {len(cards)}")
-                st.progress((st.session_state.quiz_index + 1) / len(cards))
-            with top2:
-                if st.button("🔀 Shuffle"):
-                    random.shuffle(st.session_state.flashcards)
-                    st.session_state.quiz_index = 0
-                    st.rerun()
+        def _advance():
+            st.session_state.quiz_index += 1  # can now reach len(cards) -> triggers summary screen
 
-            render_flip_card(current["question"], current["answer"], key=f"card{st.session_state.quiz_index}")
-
-            def _advance():
-                st.session_state.quiz_index += 1  # can now reach len(cards) -> triggers summary screen
-
-            nav1, nav2, nav3, nav4 = st.columns(4)
-            with nav1:
-                if st.button("⬅️ Previous", disabled=st.session_state.quiz_index == 0):
-                    st.session_state.quiz_index -= 1
-                    st.rerun()
-            with nav2:
-                # Marks this card correct AND moves to the next one - this is where scoring happens
-                if st.button("Got it right ✅"):
-                    st.session_state.review_marks[st.session_state.quiz_index] = "correct"
-                    _advance()
-                    st.rerun()
-            with nav3:
-                # Marks this card wrong AND moves to the next one
-                if st.button("Got it wrong ❌"):
-                    st.session_state.review_marks[st.session_state.quiz_index] = "incorrect"
-                    _advance()
-                    st.rerun()
-            with nav4:
-                # Moves on without marking it - stays "unattempted" in the Review score
-                if st.button("Skip ⏭️"):
-                    _advance()
-                    st.rerun()
+        nav1, nav2, nav3, nav4 = st.columns(4)
+        with nav1:
+            if st.button("⬅️ Previous", disabled=st.session_state.quiz_index == 0):
+                st.session_state.quiz_index -= 1
+                st.rerun()
+        with nav2:
+            # Marks this card correct AND moves to the next one - this is where scoring happens
+            if st.button("Got it right ✅"):
+                st.session_state.review_marks[st.session_state.quiz_index] = "correct"
+                _advance()
+                st.rerun()
+        with nav3:
+            # Marks this card wrong AND moves to the next one
+            if st.button("Got it wrong ❌"):
+                st.session_state.review_marks[st.session_state.quiz_index] = "incorrect"
+                _advance()
+                st.rerun()
+        with nav4:
+            # Moves on without marking it - stays "unattempted" in the Review score
+            if st.button("Skip ⏭️"):
+                _advance()
+                st.rerun()
 
 # ---------- REVIEW PAGE: plain Q&A list + live score ----------
 elif page == "Review":
