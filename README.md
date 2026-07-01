@@ -1,4 +1,6 @@
-# FlashGen - Bulk Material to Flashcards
+# Flashcards Generator
+
+https://flashcards-gkc5hq4xkyalu3ejd3hzpj.streamlit.app/
 
 Upload any amount of study material (PDFs, PPTs, Word docs, or even scanned/
 handwritten notes as images) and get exam-ready flashcards with an in-app
