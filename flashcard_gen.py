@@ -42,23 +42,33 @@ Study material:
 \"\"\"{chunk}\"\"\"
 """
 
-    response = requests.post(
-        GROQ_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": temperature,
-            "max_tokens": 2000,
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
-    raw_text = response.json()["choices"][0]["message"]["content"]
+    try:
+        response = requests.post(
+            GROQ_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temperature,
+                "max_tokens": 2000,
+            },
+            timeout=60,
+        )
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Couldn't reach Groq — check your internet connection.")
+    except requests.exceptions.Timeout:
+        raise RuntimeError("Groq took too long to respond (timed out after 60s). Try again.")
 
+    if response.status_code == 401:
+        raise RuntimeError("Invalid Groq API key — double check .streamlit/secrets.toml.")
+    if response.status_code == 429:
+        raise RuntimeError("Groq rate limit hit — wait a few seconds and try again.")
+    response.raise_for_status()  # catches any other unexpected HTTP error
+
+    raw_text = response.json()["choices"][0]["message"]["content"]
     return _parse_flashcard_json(raw_text)
 
 

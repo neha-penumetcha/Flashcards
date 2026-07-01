@@ -20,7 +20,7 @@ from flashcard_gen import generate_flashcards_for_chunk, dedup_flashcards
 from styles import inject_css
 from flip_card import render_flip_card
 
-st.set_page_config(page_title="FlashGen", page_icon="📑", layout="centered")
+st.set_page_config(page_title="FlashGen", page_icon="🧠", layout="centered")
 inject_css()
 
 # ---------- API KEY FROM SECRETS ----------
@@ -41,6 +41,8 @@ if "reveal" not in st.session_state:
     st.session_state.reveal = set()  # which review cards have their answer shown
 if "stored_chunks" not in st.session_state:
     st.session_state.stored_chunks = []  # text chunks from every file uploaded so far
+if "status_message" not in st.session_state:
+    st.session_state.status_message = None  # (kind, text) - shown once, then cleared
 
 cards = st.session_state.flashcards
 
@@ -50,9 +52,10 @@ def _generate_and_append(chunks, cards_per_chunk, temperature=0.4):
     Runs flashcard generation over the given chunks and appends only
     genuinely new (non-duplicate) cards to the existing deck - this is
     what makes "add more material" and "generate more questions" additive
-    instead of overwriting what's already there. Returns count added.
+    instead of overwriting what's already there. Returns (added_count, errors).
     """
     new_cards = []
+    errors = []
     progress = st.progress(0.0, text="Generating...")
     for i, chunk in enumerate(chunks):
         progress.progress((i + 1) / len(chunks), text=f"Generating chunk {i + 1}/{len(chunks)}")
@@ -61,12 +64,12 @@ def _generate_and_append(chunks, cards_per_chunk, temperature=0.4):
                 generate_flashcards_for_chunk(chunk, api_key, cards_per_chunk, temperature=temperature)
             )
         except Exception as e:
-            st.warning(f"Skipped one chunk: {e}")
+            errors.append(str(e))
     progress.empty()
     combined = dedup_flashcards(st.session_state.flashcards + new_cards)
     added = len(combined) - len(st.session_state.flashcards)
     st.session_state.flashcards = combined
-    return added
+    return added, errors
 
 # ---------- TOP BAR: branding + clear-deck tucked in the corner ----------
 top_left, top_right = st.columns([5, 1])
@@ -112,6 +115,13 @@ page = option_menu(
 if page == "Quiz":
     # ---- Add material / generate more - always available, not just when empty ----
     with st.expander("➕ Add material or generate more questions", expanded=not cards):
+        # Show the result of the last generate attempt (success, or what went wrong) -
+        # stored in session_state so it survives the rerun instead of flashing and vanishing.
+        if st.session_state.status_message:
+            kind, text = st.session_state.status_message
+            getattr(st, kind)(text)
+            st.session_state.status_message = None
+
         uploaded_files = st.file_uploader(
             "Upload PDFs, PPTs, Word docs, or scanned/handwritten images — any size, any mix",
             type=["pdf", "docx", "pptx", "txt", "png", "jpg", "jpeg"],
@@ -119,40 +129,70 @@ if page == "Quiz":
         )
         cards_per_chunk = st.slider("Flashcards per chunk", 3, 10, 6)
 
-        col_a, col_b = st.columns(2)
+        # "Generate more" only makes sense once there's material to draw on -
+        # keep it hidden entirely (not just disabled) until after the first generation.
+        if st.session_state.stored_chunks:
+            col_a, col_b = st.columns(2)
+        else:
+            col_a = st.container()
+            col_b = None
+
         with col_a:
             add_clicked = st.button(
                 "Generate from these files", type="primary", disabled=not (uploaded_files and api_key)
             )
-        with col_b:
-            more_clicked = st.button(
-                "🔁 Generate more (different)",
-                disabled=not (st.session_state.stored_chunks and api_key),
-                help="Reuses everything already uploaded to make a fresh, differently-worded batch.",
-            )
+        more_clicked = False
+        if col_b is not None:
+            with col_b:
+                more_clicked = st.button(
+                    "🔁 Generate more (different)",
+                    disabled=not api_key,
+                    help="Reuses everything already uploaded to make a fresh, differently-worded batch.",
+                )
 
         if add_clicked:
             all_chunks = []
+            failed_files = []
             for f in uploaded_files:
-                text = extract_text(f.name, f.read())
-                all_chunks.extend(chunk_text(text))
+                try:
+                    text = extract_text(f.name, f.read())
+                    all_chunks.extend(chunk_text(text))
+                except Exception as e:
+                    failed_files.append(f"{f.name} ({e})")
 
             if not all_chunks:
-                st.warning("Couldn't extract any text from these files. Are they empty or corrupted?")
+                reason = f" Failed: {'; '.join(failed_files)}" if failed_files else ""
+                st.session_state.status_message = (
+                    "warning",
+                    "Couldn't extract any text from these files. Are they empty, corrupted, or password-protected?" + reason,
+                )
             else:
                 st.session_state.stored_chunks.extend(all_chunks)
-                added = _generate_and_append(all_chunks, cards_per_chunk)
-                st.success(f"{added} new cards added — {len(st.session_state.flashcards)} total in your deck.")
-                st.rerun()
+                added, errors = _generate_and_append(all_chunks, cards_per_chunk)
+                if errors:
+                    st.session_state.status_message = (
+                        "error", f"{added} cards added, but some chunks failed: {errors[0]}"
+                    )
+                else:
+                    st.session_state.status_message = (
+                        "success", f"{added} new cards added — {len(st.session_state.flashcards)} total in your deck."
+                    )
+            st.rerun()
 
         if more_clicked:
             # Higher temperature = more varied phrasing/coverage than the first pass;
             # dedup_flashcards inside _generate_and_append filters out anything too similar.
-            added = _generate_and_append(st.session_state.stored_chunks, cards_per_chunk, temperature=0.8)
-            if added == 0:
-                st.info("Didn't find any genuinely new questions this round — try again, or add more material.")
+            added, errors = _generate_and_append(st.session_state.stored_chunks, cards_per_chunk, temperature=0.8)
+            if errors:
+                st.session_state.status_message = ("error", f"{added} cards added, but some chunks failed: {errors[0]}")
+            elif added == 0:
+                st.session_state.status_message = (
+                    "info", "Didn't find any genuinely new questions this round — try again, or add more material."
+                )
             else:
-                st.success(f"{added} new cards added — {len(st.session_state.flashcards)} total in your deck.")
+                st.session_state.status_message = (
+                    "success", f"{added} new cards added — {len(st.session_state.flashcards)} total in your deck."
+                )
             st.rerun()
 
     if not cards:
