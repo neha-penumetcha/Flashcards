@@ -1,5 +1,6 @@
 streamlit
 streamlit-option-menu
+streamlit-agraph
 requests
 fpdf2
 pdfplumber

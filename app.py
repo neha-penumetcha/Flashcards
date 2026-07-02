@@ -20,6 +20,8 @@ from flashcard_gen import generate_flashcards_for_chunk, dedup_flashcards
 from styles import inject_css
 from flip_card import render_flip_card
 from pdf_export import build_qa_pdf
+from topic_map import generate_topic_map
+from streamlit_agraph import agraph, Node, Edge, Config
 
 st.set_page_config(page_title="FlashGen", page_icon="📑", layout="centered")
 inject_css()
@@ -46,6 +48,8 @@ if "status_message" not in st.session_state:
     st.session_state.status_message = None  # (kind, text) - shown once, then cleared
 if "source_files" not in st.session_state:
     st.session_state.source_files = []  # names of every file uploaded so far
+if "topic_map" not in st.session_state:
+    st.session_state.topic_map = None  # cached {"nodes": [...], "edges": [...]}
 
 cards = st.session_state.flashcards
 
@@ -88,6 +92,7 @@ with top_right:
             st.session_state.reveal = set()
             st.session_state.stored_chunks = []
             st.session_state.source_files = []
+            st.session_state.topic_map = None
             st.rerun()
 
 if not api_key:
@@ -96,8 +101,8 @@ if not api_key:
 # ---------- MAIN NAV ----------
 page = option_menu(
     menu_title=None,
-    options=["Quiz", "Review"],
-    icons=["collection-play", "card-checklist"],
+    options=["Quiz", "Review", "Topics"],
+    icons=["collection-play", "card-checklist", "diagram-3"],
     default_index=0,
     orientation="horizontal",
     styles={
@@ -322,3 +327,52 @@ elif page == "Review":
             )
         except Exception as e:
             st.error(f"Couldn't build the PDF: {e}")
+
+# ---------- TOPICS PAGE: auto-generated concept map ----------
+elif page == "Topics":
+    st.markdown("# Topic map")
+    st.caption("How the concepts in your deck connect to each other.")
+
+    if not cards:
+        st.info("Generate a deck first on the Quiz tab, then come back here.")
+    else:
+        col_gen, col_regen = st.columns([1, 1])
+        with col_gen:
+            gen_clicked = st.button(
+                "📑 Generate topic map" if not st.session_state.topic_map else "Regenerate topic map",
+                type="primary",
+                disabled=not api_key,
+            )
+
+        if gen_clicked:
+            with st.spinner("Mapping out how these concepts connect..."):
+                st.session_state.topic_map = generate_topic_map(cards, api_key)
+            st.rerun()
+
+        data = st.session_state.topic_map
+        if data is None:
+            st.info("Click **Generate topic map** to visualize how your flashcards connect.")
+        elif not data["nodes"]:
+            st.warning("Couldn't build a topic map from this deck — try regenerating, or check your API key.")
+        else:
+            nodes = [
+                Node(id=n["id"], label=n["label"], size=22, color="#FF6B5B", font={"color": "#F6F3E9"})
+                for n in data["nodes"]
+            ]
+            edges = [
+                Edge(source=e["source"], target=e["target"], label=e.get("label", ""), color="#8FD9C4")
+                for e in data["edges"]
+            ]
+            config = Config(
+                width="100%",
+                height=520,
+                directed=True,
+                physics=True,
+                hierarchical=False,
+                nodeHighlightBehavior=True,
+                highlightColor="#FFD166",
+                collapsible=False,
+                node={"labelProperty": "label"},
+            )
+            agraph(nodes=nodes, edges=edges, config=config)
+            st.caption("Drag nodes to rearrange • scroll to zoom • click a node to highlight its connections")
