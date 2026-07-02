@@ -25,7 +25,7 @@ from pdf_export import build_qa_pdf
 from topic_map import generate_topic_map
 from streamlit_agraph import agraph, Node, Edge, Config
 
-st.set_page_config(page_title="FlashGen", page_icon="🧠", layout="centered")
+st.set_page_config(page_title="FlashGen", page_icon="📑", layout="centered")
 inject_css()
 
 # ---------- API KEY FROM SECRETS ----------
@@ -350,7 +350,7 @@ elif page == "Topics":
         col_gen, col_regen = st.columns([1, 1])
         with col_gen:
             gen_clicked = st.button(
-                "🧠 Generate topic map" if not st.session_state.topic_map else "Regenerate topic map",
+                "📑 Generate topic map" if not st.session_state.topic_map else "Regenerate topic map",
                 type="primary",
                 disabled=not api_key,
             )
