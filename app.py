@@ -13,6 +13,8 @@ and paste your free Groq key in (console.groq.com/keys).
 import streamlit as st
 from streamlit_option_menu import option_menu
 import random
+import os
+import re
 
 from extractor import extract_text
 from chunker import chunk_text
@@ -23,7 +25,7 @@ from pdf_export import build_qa_pdf
 from topic_map import generate_topic_map
 from streamlit_agraph import agraph, Node, Edge, Config
 
-st.set_page_config(page_title="FlashGen", page_icon="📑", layout="centered")
+st.set_page_config(page_title="FlashGen", page_icon="🧠", layout="centered")
 inject_css()
 
 # ---------- API KEY FROM SECRETS ----------
@@ -52,6 +54,15 @@ if "topic_map" not in st.session_state:
     st.session_state.topic_map = None  # cached {"nodes": [...], "edges": [...]}
 
 cards = st.session_state.flashcards
+
+
+def _pdf_filename(name: str) -> str:
+    """Strips any extension (.pptx, .pdf, etc.) from the document name and
+    sanitizes it for use as a download filename, e.g.
+    'Module 4 - updated.pptx' -> 'Module 4 - updated.pdf'"""
+    base = os.path.splitext(name.strip())[0] or "flashgen_deck"
+    base = re.sub(r'[\\/:*?"<>|]', "_", base)
+    return f"{base}.pdf"
 
 
 def _generate_and_append(chunks, cards_per_chunk, temperature=0.4):
@@ -322,7 +333,7 @@ elif page == "Review":
             st.download_button(
                 "📄 Download as PDF",
                 data=pdf_bytes,
-                file_name="flashgen_deck.pdf",
+                file_name=_pdf_filename(deck_name),
                 mime="application/pdf",
             )
         except Exception as e:
@@ -339,7 +350,7 @@ elif page == "Topics":
         col_gen, col_regen = st.columns([1, 1])
         with col_gen:
             gen_clicked = st.button(
-                "📑 Generate topic map" if not st.session_state.topic_map else "Regenerate topic map",
+                "🧠 Generate topic map" if not st.session_state.topic_map else "Regenerate topic map",
                 type="primary",
                 disabled=not api_key,
             )
